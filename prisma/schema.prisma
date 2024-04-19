@@ -23,8 +23,21 @@ model Users {
   UserInfos UserInfos?  
   Posts Posts[]     
   Comments Comments[]
+  UserHistories UserHistories[]
 
   @@map("Users")
+}
+model UserHistories {
+  userhistorieId String @id @default(uuid()) @map("userhistorieId")
+  UserId Int @map("UserId")
+  changedField String @map("changedField")
+  oldValue String? @map("oldValue")
+  newValue String @map("newValue")
+  changedAt DateTime @default(now()) @map("changedAt")
+
+User Users @relation(fields: [UserId], references: [userId],onDelete : Cascade)
+
+  @@map("UserHistories")
 }
 model Posts {
   postId Int @id @default(autoincrement()) @map("postId")

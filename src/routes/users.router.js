@@ -3,13 +3,14 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken"
 import {prisma} from "../utils/prisma/index.js";
 import authMiddeware from "../middlewares/auth.middeware.js";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 const router = express.Router();
 
 //사용자 회원가입 API //
 router.post('/sign-up',async(req,res,next)=>{
     try{
-        throw new Error('에러처리 테스트입니다.');
+       
     const {email, password, name, age, gender, profileImage} = req.body;
 
     //동일한 email이 있는지 확인//
@@ -22,14 +23,16 @@ router.post('/sign-up',async(req,res,next)=>{
 
     //사용자 생성//
     const hashedPassword = await bcrypt.hash(password,10);  
-    const user = await prisma.users.create({
+
+    const [user, userinfo ] = await prisma.$transaction(async(tx)=>{
+    const user = await tx.users.create({
         data:{
             email, 
             password : hashedPassword,
         }
     });
     //사용자 정보 생성//
-    const userInfo = await prisma.userInfos.create({
+    const userInfo = await tx.userInfos.create({
         data:{
             UserId : user.userId,
             name,
@@ -37,9 +40,12 @@ router.post('/sign-up',async(req,res,next)=>{
             gender: gender.toUpperCase(), //전부 대분자로 해준다.
             profileImage,
         }
-  
-    
     });
+    return [user , userInfo];
+    },{
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
+    });
+
     
     return res.status(201).json({message: '회원가입이 되었습니다.'});
 }catch(err){
@@ -65,15 +71,10 @@ router.post('/sign-in',async(req,res,next)=>{
     }
 
     //로그인 인증후 사용자에게 쿠키 발급
-    const token = jwt.sign(
-        {
-            userId : user.userId,
-        },
-        'customized_secret_key', //비밀키 , dotenv를 이용해 외부코드로 보더라도 못알아보도록
-    )
-    res.cookie('authorization', `Bearer ${token}`);
+    req.session.userId = user.userId;
+    
     return res.status(200).json({message: '로그인 성공'});
-})
+});
 
 //사용자 조회 API//
 router.get('/users',authMiddeware, async(req,res,next)=>{
@@ -99,5 +100,46 @@ router.get('/users',authMiddeware, async(req,res,next)=>{
         }
      });
      return res.status(200).json({data: user});
-})
+});
+
+//사용자 정보 변경 API//
+router.patch('/users',authMiddeware, async(req,res,next)=>{
+    //수정전 정보가 맞는지 확인
+    const {userId} = req.user;
+
+    const updatedData = req.body;
+
+    const userInfo = await prisma.userInfos.findFirst({
+        where: {UserId : + userId},
+    })
+
+    await prisma.$transaction(async(tx)=>{
+        //사용자 정보 수정
+        await tx.userInfos.update({
+            data:{
+                ...updatedData
+            },
+            where:{UserId : +userId}
+        });
+
+        //변경된 내용을 테이블에 저장
+        for (let key in updatedData) {
+            //변경이 되었을때
+            if (userInfo[key] !== updatedData[key]){
+                await tx.userHistories.create({
+                    data:{
+                        UserId : +userId,
+                        changedField : key,
+                        oldValue : String(userInfo[key]), //변경 전 데이터 
+                        newValue : String(updatedData[key]),  // 변경후 데이터 
+                    }
+                });
+            }
+        }
+    },{
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
+    return res.status(200).json({message : '변경이 성공하였습니다.'})
+});
+
 export default router; 
